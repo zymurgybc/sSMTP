@@ -203,7 +203,7 @@ void dead_letter(void)
 	}
 	memcpy (path, pw->pw_dir, strlen (pw->pw_dir));
 	memcpy (path + strlen (pw->pw_dir), DEAD_LETTER, sizeof (DEAD_LETTER));
-	
+
 	if((fp = fopen(path, "a")) == (FILE *)NULL) {
 		/* Perhaps the person doesn't have a homedir... */
 		if(log_level > 0) {
@@ -354,6 +354,19 @@ char *append_domain(char *str)
 {
 	char buf[(BUF_SZ + 1)];
 
+	// We're looking for a local user name (no host name present)
+	// who happens to also be the sender (ie. sending a bcc: to sender?)
+	if(strchr(str, '@') == (char *)NULL) {
+		uid_t uid = getuid();
+		struct passwd *pw = getpwuid(uid);
+		if(pw != (struct passwd *)NULL) {
+			if(strncmp(pw->pw_name,str, strlen(pw->pw_name) + 1)==0 && uad!=(char*)NULL) {
+				// we already have a user reverse alias
+				return(strdup(uad));
+			}
+		}
+	}
+	// If the user was not remapped, we still need to append the domain.
 	if(strchr(str, '@') == (char *)NULL) {
 		if(snprintf(buf, BUF_SZ, "%s@%s", str,
 #ifdef REWRITE_DOMAIN
@@ -448,7 +461,7 @@ void revaliases(struct passwd *pw)
 	}
 }
 
-/* 
+/*
 from_strip() -- Transforms "Name <login@host>" into "login@host" or "login@host (Real name)"
 */
 char *from_strip(char *str)
@@ -636,11 +649,11 @@ int crammd5(char *challengeb64, char *username, char *password, char *responseb6
 	unsigned char digascii[MD5_DIGEST_LEN * 2 + 1];
 	unsigned char challenge[(BUF_SZ + 1)];
 	unsigned char response[(BUF_SZ + 1)];
-	unsigned char secret[(MD5_BLOCK_LEN + 1)]; 
+	unsigned char secret[(MD5_BLOCK_LEN + 1)];
 
 	memset (secret,0,sizeof(secret));
 	memset (challenge,0,sizeof(challenge));
-	strncpy (secret, password, sizeof(secret));	
+	strncpy (secret, password, sizeof(secret));
 	if (!challengeb64 || strlen(challengeb64) > sizeof(challenge) * 3 / 4)
 		return 0;
 	from64tobits(challenge, challengeb64);
@@ -655,7 +668,7 @@ int crammd5(char *challengeb64, char *username, char *password, char *responseb6
 
 	if (sizeof(response) <= strlen(username) + sizeof(digascii))
 		return 0;
-	
+
 	strncpy (response, username, sizeof(response) - sizeof(digascii) - 2);
 	strcat (response, " ");
 	strcat (response, digascii);

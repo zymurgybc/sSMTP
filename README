@@ -36,6 +36,15 @@ Known problems:
  batched SMTP input which is not supported. The solution is to use your mailhub
  as smtpserver in pine.conf. If the mailhub is not reachable, sSMTP will fail.
 
+
+ The basic configure should be:
+ ./configure --enable-ssl
+
+ The basic Ubuntu install requires these additionl steps (depends where you install to):
+ %> sudo chgrp mail /usr/local/sbin/ssmtp
+ %> sudo chmod 2755 /usr/local/sbin/ssmtp
+ For each user, you need to add them to the mail group
+ %> sudo usermod -a -G mail ${userName}
 Authors:
  David Collier-Brown, davecb@hobbes.ss.org, davecb@sni.ca or dave@lethe.uucp
  Christoph Lameter, clameter@debian.org, clameter@waterf.org, clameter@i-m-f.org

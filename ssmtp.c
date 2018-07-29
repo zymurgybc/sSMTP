@@ -72,7 +72,7 @@ char *auth_user = '\0';
 char *auth_pass = '\0';
 char *auth_method = '\0';		/* Mechanism for SMTP authentication */
 char *mail_domain = '\0';
-char *from = '\0';		/* Use this as the From: address */
+char *from = '\0';			/* Use this as the From: address */
 char *hostname;
 char *mailhost = "mailhub";
 char *minus_f = '\0';
@@ -81,11 +81,12 @@ char *gecos;
 char *prog = '\0';
 char *root = NULL;
 char *tls_cert = "/etc/ssl/certs/ssmtp.pem";	/* Default Certificate */
-char *uad = '\0';
-char *config_file = '\0';		/* alternate configuration file */
+char *uad = '\0';				/* sender user's alias */
+char *config_file = '\0';			/* alternate configuration file */
 
 headers_t headers, *ht;
 
+#define VERBOSE_LOG 1
 #ifdef DEBUG
 int log_level = 1;
 #else
@@ -164,6 +165,8 @@ ssize_t smtp_write(int fd, char *format, ...);
 int smtp_read(int fd, char *response);
 int smtp_read_all(int fd, char *response);
 int smtp_okay(int fd, char *response);
+void revaliases(struct passwd *pw);
+char* revalias_name(char *username);
 
 /*
 dead_letter() -- Save stdin to ~/dead.letter if possible
@@ -300,10 +303,12 @@ char *addr_parse(char *str)
 {
 	char *p, *q;
 
+#if VERBOSE_LOG
+        log_event(LOG_INFO, "*** addr_parse(): str = [%s]", str);
+#endif
 #if 0
 	(void)fprintf(stderr, "*** addr_parse(): str = [%s]\n", str);
 #endif
-
 	/* Simple case with email address enclosed in <> */
 	if((p = strdup(str)) == (char *)NULL) {
 		die("addr_parse(): strdup()");
@@ -316,6 +321,9 @@ char *addr_parse(char *str)
 			*p = '\0';
 		}
 
+#if VERBOSE_LOG
+        log_event(LOG_INFO, "*** addr_parse(): q = [%s]", q);
+#endif
 #if 0
 		(void)fprintf(stderr, "*** addr_parse(): q = [%s]\n", q);
 #endif
@@ -329,8 +337,11 @@ char *addr_parse(char *str)
 	}
 	p = strip_pre_ws(q);
 
+#if VERBOSE_LOG
+        log_event(LOG_INFO, "*** addr_parse(1): p = [%s]", p);
+#endif
 #if 0
-	(void)fprintf(stderr, "*** addr_parse(): p = [%s]\n", p);
+	(void)fprintf(stderr, "*** addr_parse(1): p = [%s]\n", p);
 #endif
 
 	q = strip_post_ws(p);
@@ -340,8 +351,15 @@ char *addr_parse(char *str)
 	}
 	(void)strip_post_ws(p);
 
+	if(strchr(p, '@') == NULL) {
+		p = revalias_name(p);
+	}
+
+#if VERBOSE_LOG
+        log_event(LOG_INFO, "*** addr_parse(2): p = [%s]", p);
+#endif
 #if 0
-	(void)fprintf(stderr, "*** addr_parse(): p = [%s]\n", p);
+	(void)fprintf(stderr, "*** addr_parse(2): p = [%s]\n", p);
 #endif
 
 	return(p);
@@ -360,12 +378,20 @@ char *append_domain(char *str)
 		uid_t uid = getuid();
 		struct passwd *pw = getpwuid(uid);
 		if(pw != (struct passwd *)NULL) {
-			if(strncmp(pw->pw_name,str, strlen(pw->pw_name) + 1)==0 && uad!=(char*)NULL) {
-				// we already have a user reverse alias
-				return(strdup(uad));
+			if(strncmp(pw->pw_name,str, strlen(pw->pw_name) + 1)==0)
+			{
+				if(uad==(char*)NULL) {
+					// we haven't yet reverse aliased the user
+					revaliases(pw);
+				}
+				if(uad!=(char*)NULL) {
+					// we already have a user reverse alias
+					return(strdup(uad));
+				}
 			}
 		}
 	}
+
 	// If the user was not remapped, we still need to append the domain.
 	if(strchr(str, '@') == (char *)NULL) {
 		if(snprintf(buf, BUF_SZ, "%s@%s", str,
@@ -442,6 +468,66 @@ void revaliases(struct passwd *pw)
 				if((p = strtok(NULL, " \t\r\n:"))) {
 					if((mailhost = strdup(p)) == (char *)NULL) {
 						die("revaliases() -- strdup() failed");
+					}
+
+					if((p = strtok(NULL, " \t\r\n:"))) {
+						port = atoi(p);
+					}
+
+					if(log_level > 0) {
+						log_event(LOG_INFO, "Set MailHub=\"%s\"\n", mailhost);
+						log_event(LOG_INFO,
+							"via SMTP Port Number=\"%d\"\n", port);
+					}
+				}
+			}
+		}
+
+		fclose(fp);
+	}
+}
+
+/*
+revalias_name() -- Parse the reverse alias file and return aliased email
+*/
+char* revalias_name(char *username)
+{
+#if VERBOSE_LOG
+	log_event(LOG_INFO, "*** revalias_name(1): username = [%s]", username);
+#endif
+	char buf[(BUF_SZ + 1)], *p;
+	FILE *fp;
+
+	/* Try to open the reverse aliases file */
+	if((fp = fopen(REVALIASES_FILE, "r"))) {
+		/* Search if a reverse alias is defined for the sender */
+		while(fgets(buf, sizeof(buf), fp)) {
+			/* Make comments invisible */
+			if((p = strchr(buf, '#'))) {
+				*p = '\0';
+			}
+
+			/* Ignore malformed lines and comments */
+			if(strchr(buf, ':') == (char *)NULL) {
+				continue;
+			}
+
+			/* Parse the alias */
+			if(((p = strtok(buf, ":"))) && !strcmp(p, username)) {
+				if((p = strtok(NULL, ": \t\r\n"))) {
+					char *alias;
+					if((alias = strdup(p)) == (char *)NULL) {
+						die("revalias_name() -- strdup() failed");
+					}
+#if VERBOSE_LOG
+					log_event(LOG_INFO, "*** revalias_name(2): username = [%s], aliase = [%s]", username, alias);
+#endif
+					return alias;
+				}
+
+				if((p = strtok(NULL, " \t\r\n:"))) {
+					if((mailhost = strdup(p)) == (char *)NULL) {
+						die("revalias_name() -- strdup() failed");
 					}
 
 					if((p = strtok(NULL, " \t\r\n:"))) {
@@ -552,7 +638,9 @@ void rcpt_save(char *str)
 		return;
 	}
 #endif
-
+#if VERBOSE_LOG
+	log_event(LOG_INFO, "*** rcpt_save(): str = [%s]", str);
+#endif
 #if 0
 	(void)fprintf(stderr, "*** rcpt_save(): str = [%s]\n", str);
 #endif
@@ -583,6 +671,9 @@ void rcpt_parse(char *str)
 	bool_t in_quotes = False, got_addr = False;
 	char *p, *q, *r;
 
+#if VERBOSE_LOG
+        log_event(LOG_INFO, "*** rcpt_parse(): str = [%s]", str);
+#endif
 #if 0
 	(void)fprintf(stderr, "*** rcpt_parse(): str = [%s]\n", str);
 #endif
@@ -604,6 +695,9 @@ void rcpt_parse(char *str)
 	}
 	q = p;
 
+#if VERBOSE_LOG
+	log_event(LOG_INFO, "*** rcpt_parse(): q = [%s]", q);
+#endif
 #if 0
 	(void)fprintf(stderr, "*** rcpt_parse(): q = [%s]\n", q);
 #endif
@@ -631,6 +725,9 @@ void rcpt_parse(char *str)
 
 			rcpt_save(addr_parse(r));
 			r = (q + 1);
+#if VERBOSE_LOG
+			log_event(LOG_INFO, "*** rcpt_parse(): r = [%s]", r);
+#endif
 #if 0
 			(void)fprintf(stderr, "*** rcpt_parse(): r = [%s]\n", r);
 #endif
@@ -686,6 +783,9 @@ rcpt_remap() -- Alias systems-level users to the person who
 */
 char *rcpt_remap(char *str)
 {
+#if VERBOSE_LOG
+	log_event(LOG_INFO, "*** rcpt_remap(): str = [%s]", str);
+#endif
 	struct passwd *pw;
 	if((root==NULL) || strlen(root)==0 || strchr(str, '@') ||
 		((pw = getpwnam(str)) == NULL) || (pw->pw_uid >= minuserid)) {
@@ -804,11 +904,11 @@ void header_parse(FILE *stream)
 						/* Must insert '\r' before '\n's embedded in header
 						   fields otherwise qmail won't accept our mail
 						   because a bare '\n' violates some RFC */
-						
+
 						*(q - 1) = '\r';	/* Replace previous \n with \r */
 						*q++ = '\n';		/* Insert \n */
 						len++;
-						
+
 						break;
 
 				case '\n':
@@ -837,11 +937,11 @@ void header_parse(FILE *stream)
 						/* Must insert '\r' before '\n's embedded in header
 						   fields otherwise qmail won't accept our mail
 						   because a bare '\n' violates some RFC */
-						
+
 						*(q - 1) = '\r';	/* Replace previous \n with \r */
 						*q++ = '\n';		/* Insert \n */
 						len++;
-						
+
 						break;
 
 				case '\n':
@@ -865,7 +965,7 @@ void header_parse(FILE *stream)
 /*
  * This is much like strtok, but does not modify the string
  * argument.
- * Args: 
+ * Args:
  * 	char **s:
  * 		Address of the pointer to the string we are looking at.
  * 	const char *delim:
@@ -1129,7 +1229,7 @@ bool_t read_config()
 				else {
 					use_oldauth = False;
 				}
- 
+
 				if(log_level > 0) {
 					log_event(LOG_INFO,
 						"Set UseOldAUTH=\"%s\"\n",
@@ -1458,7 +1558,7 @@ ssize_t smtp_write(int fd, char *format, ...)
 	(void)strcat(buf, "\r\n");
 
 	outbytes = fd_puts(fd, buf, strlen(buf));
-	
+
 	return (outbytes >= 0) ? outbytes : 0;
 }
 

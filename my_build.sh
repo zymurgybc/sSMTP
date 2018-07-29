@@ -9,8 +9,8 @@ fi
 make
 sudo make install
 
-sudo chmod 2755 /usr/sbin/ssmtp
 sudo chgrp mail /usr/sbin/ssmtp
+sudo chmod 2755 /usr/sbin/ssmtp
 
 if [ -f "/etc/ssmtp/revaliases.bak" ]; then
    sudo cp /etc/ssmtp/revaliases.bak /etc/ssmtp/revaliases

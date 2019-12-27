@@ -1,3 +1,8 @@
+#!/bin/sh
+
+# you may need:
+# sudo apt-get install libssl-dev
+
 ./configure --enable-ssl --enable-inet6 --prefix=/usr --exec-prefix=/usr/sbin --sysconfdir=/etc
 
 if [ -f "/etc/ssmtp/revaliases" ]; then

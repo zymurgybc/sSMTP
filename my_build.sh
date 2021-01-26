@@ -27,7 +27,8 @@ sudo chmod 2555 /usr/sbin/ssmtp
 # For each user:
 # sudo usermod -a -G mail ${userid}
 
-# this updates the MTA from something like exim4 to the ssmtp agent
+# this updates the system MTA from something like exim4 to the ssmtp agent
 # but this does not fix the basic configuration required in /etc/ssmtp/ssmtp.conf
-sudo rm /usr/sbin/sendmail
-sudo ln -s /usr/sbin/ssmtp /usr/sbin/ssmtp
+sudo rm /etc/alternatives/mail
+sudo ln -s /usr/sbin/ssmtp /etc/alternatives/mail
+
